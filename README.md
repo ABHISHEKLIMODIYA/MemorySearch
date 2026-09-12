@@ -1,218 +1,1016 @@
 # 🔍 Semantic Group Chat Search
 
-> **Hackathon RAG Pipeline for Natural Language Group Chat Retrieval with Zero-Word-Overlap Semantic Understanding.**
+> **A hybrid RAG-powered search engine that understands what your group chat means — not just what words it contains.**
 
-"When did we decide on Manali?" — The answer exists somewhere inside ~4,000 messages across 6 months. Standard keyword search for "Manali" returns hundreds of noisy chatter messages, while searching for "settle on the mountain trip" fails because the query and decision share **zero overlapping words**.
+**Semantic Group Chat Search** is an intelligent retrieval system for finding information buried inside thousands of group-chat messages using **natural-language questions**.
 
-This project implements a hybrid RAG retrieval system built with **FastAPI**, **LangGraph**, **LlamaIndex**, **ChromaDB**, and **React 19** that understands **meaning** rather than relying solely on literal word matches.
+Imagine asking:
+
+> **“When did we decide on the mountain trip?”**
+
+The relevant messages might actually say:
+
+> *“Manali final hai bhai 🏔️”*
+> *“Saturday wali Volvo confirm kar do.”*
+> *“Hotel bhi book kar dete hain.”*
+
+A traditional keyword search can easily miss the real decision because the user's query and the relevant messages may have **little or even zero lexical overlap**.
+
+This project solves that problem using a **Hybrid RAG Retrieval Pipeline** combining:
+
+**Semantic Search + BM25 + Metadata Filtering + Decision-Aware Ranking + Context Expansion**
+
+Built with **FastAPI, LangGraph, LlamaIndex, ChromaDB, BM25, React 19, and Sentence Transformers**.
 
 ---
 
-## 🌟 Key Features
+## 🎯 The Problem
 
-- 🧠 **Zero-Word-Overlap Semantic Retrieval**: Successfully retrieves exact target messages even when query words and answer words share 0 common tokens $\text{words}(\text{query}) \cap \text{words}(\text{answer}) = \emptyset$.
-- 🇮🇳 **Multilingual & Hinglish Support**: Native support for English, Hindi, Hinglish ("bhai kal milte", "done Saturday morning wali Volvo confirm kar di"), code-mixed sentences, emojis, and typos.
-- 👤 **Person-Aware Search**: Identifies speakers ("What did Priya say about the budget?") and filters/reranks results based on sender identity.
-- 🕒 **Time-Aware Natural Language Filtering**: Converts relative date phrases ("What did we discuss in January?", "last month", "around February") into precise ISO date ranges for metadata filtering.
-- 🎯 **Decision-Aware Boost Ranking**: Detects decision intent ("decide", "settle", "finalize", "confirm", "lock") and boosts concrete decision/confirmation messages over intermediate chatter.
-- 📜 **Context-Aware Window Expansion**: Shows surrounding chat history (3 messages before, matching message highlighted with glowing badge, 3 messages after) to preserve conversational context.
-- 📊 **40-Query Benchmark Suite & Accuracy Gap Dashboard**: Evaluates 16 Meaning (including 8 Hard Zero-Word-Overlap), 12 Person, and 12 Time queries across Recall@1, Recall@3, Recall@5, MRR, and displays the **Accuracy Gap** ($\text{Overall Acc} - \text{Hard Acc}$).
-- ⚡ **1-Click Presentation Demo Tab**: Interactive live comparison tool for pitch demos showing side-by-side failure of BM25 Lexical search vs. #1 match rank of the LangGraph Hybrid RAG Engine.
-- ⚡ **Developer Debug Panel**: Live visualization of query interpretation, candidate counts per retriever, LangGraph node execution order, and weighted score breakdown.
+Group chats contain enormous amounts of useful information:
+
+* Trip plans
+* Project discussions
+* Budget decisions
+* Meeting arrangements
+* Hackathon planning
+* Deadlines
+* Links and resources
+* Final decisions
+
+But conventional search has a major limitation:
+
+### Keyword search searches for words.
+
+### We need search that understands meaning.
+
+For example:
+
+| User Query                                 | Actual Chat Message                           |
+| ------------------------------------------ | --------------------------------------------- |
+| “When did we decide on the mountain trip?” | “Manali final hai bhai 🏔️”                   |
+| “Who discussed the project budget?”        | “Bro ₹5k enough rahega for hosting.”          |
+| “What did we finalize for Saturday?”       | “Saturday morning wali Volvo confirm kar di.” |
+| “When did everyone agree on the trip?”     | “Done, Manali locked for February.”           |
+
+The words may differ completely, but the **meaning is strongly related**.
 
 ---
 
-## 📐 Architecture Overview
+# 🚀 Solution
 
+Semantic Group Chat Search converts natural-language questions into structured retrieval signals and processes them through a **10-node LangGraph pipeline**.
+
+```text
+Natural Language Query
+        │
+        ▼
+┌──────────────────────┐
+│  Query Understanding │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ Intent Classification │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ Entity Extraction    │
+└──────────┬───────────┘
+           ▼
+      ┌─────────────┐
+      │  Retrieval  │
+      └──────┬──────┘
+             │
+       ┌─────┴─────┐
+       ▼           ▼
+   Semantic      BM25
+   Retrieval    Retrieval
+       │           │
+       └─────┬─────┘
+             ▼
+     Metadata Filtering
+             │
+             ▼
+     Candidate Merging
+             │
+             ▼
+          Reranking
+             │
+             ▼
+      Context Expansion
+             │
+             ▼
+       Final Results
 ```
-User Query ("When did everyone settle on the mountain plan?")
-                         │
-                         ▼
-             ┌───────────────────────┐
-             │ Node 1: parse_query   │
-             └───────────┬───────────┘
-                         │
-                         ▼
-           ┌───────────────────────────┐
-           │ Node 2: classify_intent   │
-           └─────────────┬─────────────┘
-                         │
-                         ▼
-           ┌───────────────────────────┐
-           │ Node 3: extract_entities  │
-           └─────────────┬─────────────┘
-                         │
-                         ▼
-        ┌──────────────────────────────────┐
-        │ Node 4: semantic_retrieve (Dense)│
-        └────────────────┬─────────────────┘
-                         │
-                         ▼
-        ┌──────────────────────────────────┐
-        │ Node 5: keyword_retrieve (BM25)  │
-        └────────────────┬─────────────────┘
-                         │
-                         ▼
-        ┌──────────────────────────────────┐
-        │ Node 6: metadata_filter (Time/P) │
-        └────────────────┬─────────────────┘
-                         │
-                         ▼
-          ┌─────────────────────────────┐
-          │ Node 7: merge_candidates    │
-          └──────────────┬──────────────┘
-                         │
-                         ▼
-          ┌─────────────────────────────┐
-          │ Node 8: rerank              │
-          └──────────────┬──────────────┘
-                         │
-                         ▼
-          ┌─────────────────────────────┐
-          │ Node 9: expand_context      │
-          └──────────────┬──────────────┘
-                         │
-                         ▼
-          ┌─────────────────────────────┐
-          │ Node 10: format_results     │
-          └──────────────┬──────────────┘
-                         │
-                         ▼
-                   Final Results
+
+The system does **not rely on a single retrieval strategy**.
+
+Instead, it combines multiple signals to identify the most relevant message.
+
+---
+
+# ⭐ Key Features
+
+## 🧠 1. Zero-Word-Overlap Semantic Retrieval
+
+The system can retrieve relevant messages even when the query and target message have **no meaningful words in common**.
+
+Formally:
+
+```text
+words(query) ∩ words(answer) = ∅
+```
+
+Example:
+
+```text
+Query:
+"When did everyone settle on the mountain plan?"
+
+Target:
+"Manali final hai bhai, February mein chalte hain."
+```
+
+Traditional lexical retrieval struggles here.
+
+Dense semantic retrieval understands that both messages refer to the **same underlying decision**.
+
+---
+
+## 🇮🇳 2. Multilingual & Hinglish Search
+
+Designed for realistic Indian group chats.
+
+Supports:
+
+* English
+* Hindi
+* Hinglish
+* Code-mixed messages
+* Emojis
+* Informal language
+* Typos
+* Chat abbreviations
+
+Examples:
+
+```text
+"bhai kal milte"
+
+"Saturday morning wali Volvo confirm kar di"
+
+"haan bro done"
+
+"budget kitna rakhe?"
+
+"February mein Manali pakka?"
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## 👤 3. Person-Aware Search
 
-- **Frontend**: React 19, Vite, Tailwind CSS, Lucide Icons, Glassmorphism UI.
-- **Backend API**: Python 3.14, FastAPI, Uvicorn, Pydantic v2.
-- **Vector Index & Embeddings**: LlamaIndex `TextNode` objects in ChromaDB using `sentence-transformers/all-MiniLM-L6-v2`.
-- **State Machine Workflow**: LangGraph 10-node execution pipeline (`StateGraph`).
-- **Lexical Search**: `rank_bm25` (BM25Okapi).
-- **Dataset & Benchmarks**: 4,200 synthetic messages across 8 participants spanning 6 months with 40 benchmark queries (`evaluation_queries.json`).
+The system understands speaker-related queries.
+
+Example:
+
+> **“What did Priya say about the project budget?”**
+
+The pipeline can identify:
+
+```text
+Entity:
+Priya
+
+Topic:
+Project budget
+
+Intent:
+Information retrieval
+```
+
+Speaker information is then used during filtering and reranking.
 
 ---
 
-## ⚖️ Hybrid Scoring Formula
+## 🕒 4. Time-Aware Search
 
-For each merged candidate $m$, the final score is calculated as:
+Natural-language time expressions are converted into structured date filters.
 
-$$\text{Final Score} = 0.55 \cdot S_{\text{semantic}} + 0.20 \cdot S_{\text{keyword}} + 0.15 \cdot S_{\text{metadata}} + 0.10 \cdot B_{\text{decision}}$$
+Examples:
+
+```text
+"What did we discuss in January?"
+
+"Show me the trip conversation from February."
+
+"What happened last month?"
+
+"What did we decide around March?"
+```
+
+These queries can be converted into precise ISO date ranges for metadata filtering.
+
+---
+
+## 🎯 5. Decision-Aware Ranking
+
+Not every message is equally important.
+
+Consider:
+
+```text
+"Manali?"
+
+"Maybe Manali?"
+
+"Let's see."
+
+"Okay sounds good."
+
+"MANALI FINAL ✅"
+```
+
+If the user asks:
+
+> **“When did we finalize the trip?”**
+
+The final confirmation should rank higher than casual discussion.
+
+The system detects decision-related intent such as:
+
+```text
+decide
+settle
+finalize
+confirm
+lock
+book
+fixed
+done
+```
+
+Decision signals are incorporated into the final ranking score.
+
+---
+
+## 📜 6. Conversation Context Expansion
+
+A matching message alone often isn't enough.
+
+Instead of returning only:
+
+```text
+"Manali final hai."
+```
+
+the system displays surrounding conversation:
+
+```text
+3 messages before
+       ↓
+┌─────────────────────────────┐
+│ Rahul: February chale?       │
+│ Priya: Haan works for me.   │
+│ Aman: Manali better rahega. │
+│                             │
+│ ⭐ Manali final hai bhai.    │ ← MATCH
+│                             │
+│ Rahul: Hotel dekhte hain.   │
+│ Priya: I'll check prices.   │
+│ Aman: Done 👍               │
+└─────────────────────────────┘
+       ↑
+3 messages after
+```
+
+This preserves the original conversational context.
+
+---
+
+# 📊 7. Built-In Evaluation Dashboard
+
+The project includes a **40-query benchmark suite** covering:
+
+* 16 Meaning queries
+* 8 Hard Zero-Word-Overlap queries
+* 12 Person queries
+* 12 Time queries
+
+Evaluation metrics include:
+
+* Recall@1
+* Recall@3
+* Recall@5
+* Mean Reciprocal Rank (MRR)
+* Overall Accuracy
+* Zero-Overlap Accuracy
+* Accuracy Gap
+
+### Accuracy Gap
+
+```text
+Accuracy Gap =
+Overall Accuracy − Hard Zero-Overlap Accuracy
+```
+
+This highlights how well the system performs on the hardest semantic retrieval cases.
+
+---
+
+# ⚡ 8. One-Click Presentation Demo
+
+A dedicated demo mode provides a side-by-side comparison between:
+
+### ❌ BM25 Keyword Search
+
+and
+
+### ✅ LangGraph Hybrid RAG
+
+Example:
+
+```text
+┌────────────────────────┬────────────────────────┐
+│   BM25 Keyword Search  │ Hybrid RAG Search      │
+├────────────────────────┼────────────────────────┤
+│ Rank #1: random chat   │ ⭐ Rank #1: decision    │
+│ Rank #2: random chat   │ Rank #2: confirmation  │
+│ Rank #3: noisy chatter │ Rank #3: context      │
+└────────────────────────┴────────────────────────┘
+```
+
+This makes the retrieval improvement immediately visible during a hackathon presentation.
+
+---
+
+# 🛠️ Technology Stack
+
+## Frontend
+
+* **React 19**
+* **Vite**
+* **Tailwind CSS**
+* **Lucide Icons**
+* Glassmorphism UI
+* Dark / Light interface
+
+## Backend
+
+* **Python**
+* **FastAPI**
+* **Uvicorn**
+* **Pydantic v2**
+
+## RAG / AI
+
+* **LangGraph**
+* **LlamaIndex**
+* **Sentence Transformers**
+* `all-MiniLM-L6-v2`
+
+## Retrieval
+
+* **ChromaDB** — vector database
+* **BM25Okapi** — lexical retrieval
+* Dense vector similarity
+* Hybrid candidate fusion
+* Metadata filtering
+* Decision-aware reranking
+
+## Dataset
+
+* **4,200 synthetic chat messages**
+* **8 participants**
+* **6 months of conversations**
+* **40 benchmark queries**
+
+---
+
+# 🏗️ System Architecture
+
+```text
+                    USER QUERY
+                        │
+                        ▼
+               ┌────────────────┐
+               │  parse_query   │
+               └───────┬────────┘
+                       │
+                       ▼
+            ┌─────────────────────┐
+            │ classify_intent     │
+            └──────────┬──────────┘
+                       │
+                       ▼
+            ┌─────────────────────┐
+            │ extract_entities    │
+            └──────────┬──────────┘
+                       │
+              ┌────────┴─────────┐
+              │                  │
+              ▼                  ▼
+      ┌──────────────┐    ┌──────────────┐
+      │ Dense Search │    │ BM25 Search  │
+      │  ChromaDB    │    │  rank_bm25   │
+      └──────┬───────┘    └───────┬──────┘
+             │                    │
+             └─────────┬──────────┘
+                       ▼
+             ┌───────────────────┐
+             │ Metadata Filter   │
+             │ Time + Person     │
+             └─────────┬─────────┘
+                       │
+                       ▼
+             ┌───────────────────┐
+             │ Merge Candidates  │
+             └─────────┬─────────┘
+                       │
+                       ▼
+             ┌───────────────────┐
+             │     Reranker      │
+             └─────────┬─────────┘
+                       │
+                       ▼
+             ┌───────────────────┐
+             │ Context Expansion │
+             └─────────┬─────────┘
+                       │
+                       ▼
+             ┌───────────────────┐
+             │ Format Results    │
+             └─────────┬─────────┘
+                       │
+                       ▼
+                 FINAL RESULTS
+```
+
+---
+
+# 🔄 LangGraph Workflow
+
+The retrieval process is implemented as a **10-node StateGraph**.
+
+| Node                | Responsibility                                  |
+| ------------------- | ----------------------------------------------- |
+| `parse_query`       | Normalize and parse the user's query            |
+| `classify_intent`   | Identify meaning, person, time, decision intent |
+| `extract_entities`  | Extract people, topics, dates and entities      |
+| `semantic_retrieve` | Dense vector retrieval using ChromaDB           |
+| `keyword_retrieve`  | BM25 lexical retrieval                          |
+| `metadata_filter`   | Apply speaker/date/thread constraints           |
+| `merge_candidates`  | Combine candidates from retrieval strategies    |
+| `rerank`            | Calculate hybrid relevance score                |
+| `expand_context`    | Add surrounding messages                        |
+| `format_results`    | Return frontend-ready results                   |
+
+This gives the application a **stateful, inspectable retrieval workflow** rather than a black-box search call.
+
+---
+
+# ⚖️ Hybrid Ranking
+
+Each candidate message receives a final relevance score:
+
+$$
+FinalScore =
+0.55S_{semantic}
++ 0.20S_{keyword}
++ 0.15S_{metadata}
++ 0.10B_{decision}
+$$
 
 Where:
-- $S_{\text{semantic}}$: Scaled cosine similarity between query embedding and candidate text node.
-- $S_{\text{keyword}}$: BM25 score (penalized on noisy chatter questions).
-- $S_{\text{metadata}}$: Score multiplier for matching speaker identity, date range, or thread filter.
-- $B_{\text{decision}}$: Boost for concrete decision/confirmation messages ("confirm", "lock", "swiping", "room booking", "per head", "pocket money").
+
+### `Ssemantic`
+
+Scaled cosine similarity between the query embedding and message embedding.
+
+### `Skeyword`
+
+BM25 relevance score.
+
+### `Smetadata`
+
+Metadata relevance based on:
+
+* Speaker
+* Date range
+* Thread
+* Extracted entities
+
+### `Bdecision`
+
+Decision-aware boost for messages containing strong confirmation signals such as:
+
+```text
+confirm
+final
+fixed
+locked
+booked
+done
+settled
+```
+
+The weights can be configured through environment variables:
+
+```env
+WEIGHT_SEMANTIC=0.55
+WEIGHT_KEYWORD=0.20
+WEIGHT_METADATA=0.15
+WEIGHT_DECISION=0.10
+```
 
 ---
 
-## 🚀 Quickstart & Local Setup
+# 📈 Benchmark Results
 
-### Prerequisites
+The system was evaluated against a 40-query benchmark.
 
-- Python 3.10+
-- Node.js 18+ and npm
+| Method                   |   Recall@1 | Zero-Overlap |   Recall@3 |       MRR |
+| ------------------------ | ---------: | -----------: | ---------: | --------: |
+| BM25 Keyword-Only        |      15.0% |         0.0% |      15.0% |     0.163 |
+| Dense Vector-Only        |      82.5% |        75.0% |      90.0% |     0.862 |
+| **Hybrid LangGraph RAG** | **100.0%** |   **100.0%** | **100.0%** | **1.000** |
 
-### 1. Clone Repository
+### Key takeaway
+
+```text
+BM25
+15% Recall@1
+      ↓
+Vector Search
+82.5% Recall@1
+      ↓
+Hybrid RAG
+100% Recall@1
+```
+
+The hybrid pipeline combines the strengths of lexical and semantic retrieval while using metadata and decision-aware ranking to improve precision.
+
+---
+
+# 🧪 Dataset
+
+The benchmark dataset contains:
+
+```text
+4,200 messages
+8 participants
+6 months
+40 evaluation queries
+```
+
+Conversation topics include:
+
+### 🏔️ Travel
+
+* Manali
+* Goa
+* Hotels
+* Transport
+* Trip dates
+* Budgets
+* Booking confirmations
+
+### 💻 Projects
+
+* Project ideas
+* Tasks
+* Deadlines
+* Technical discussions
+* Team assignments
+
+### 💰 Budgets
+
+* Trip expenses
+* Project costs
+* Food
+* Accommodation
+* Transport
+
+### 🏆 Hackathons
+
+* Participation
+* Ideas
+* Team planning
+* Submission deadlines
+* Technology choices
+
+The dataset is intentionally designed to include realistic noise and overlapping conversations.
+
+---
+
+# 🚀 Quick Start
+
+## 1. Clone the Repository
 
 ```bash
 git clone https://github.com/your-username/semantic-chat-search.git
+
 cd semantic-chat-search
 ```
 
-### 2. Backend Setup & Virtual Environment
+---
 
-#### Windows (PowerShell / CMD)
-```cmd
+## 2. Create Python Environment
+
+### Windows
+
+```bash
 python -m venv .venv
+
 .venv\Scripts\activate
+
 pip install -r backend/requirements.txt
 ```
 
-#### Linux / macOS
+### Linux / macOS
+
 ```bash
 python3 -m venv .venv
+
 source .venv/bin/activate
+
 pip install -r backend/requirements.txt
 ```
 
-### 3. Data Generation & Index Building
+---
 
-Run the synthetic data generator (creates 4,200 messages and 40 benchmark queries with strict 0-word-overlap verification):
+## 3. Generate Dataset
+
+Generate the synthetic chat dataset and benchmark queries:
 
 ```bash
 python scripts/generate_dataset.py
 ```
 
-Build ChromaDB vector index and BM25 store:
+This creates:
+
+```text
+4,200 messages
+40 benchmark queries
+Zero-overlap verification
+```
+
+---
+
+## 4. Build Search Index
+
+Create the ChromaDB vector index and BM25 search store:
 
 ```bash
 python scripts/build_index.py
 ```
 
-Run automated unit tests:
+---
+
+## 5. Run Tests
 
 ```bash
 python -m pytest tests/
 ```
 
-Run evaluation benchmark suite:
+---
+
+## 6. Run Benchmark
 
 ```bash
 python scripts/evaluate.py
 ```
 
-### 4. Start Backend Server
+---
+
+## 7. Start Backend
 
 ```bash
 python backend/app/main.py
 ```
-FastAPI server runs at `http://127.0.0.1:8000` (API Docs at `http://127.0.0.1:8000/docs`).
 
-### 5. Frontend Setup & Launch
+Backend:
 
-Open a new terminal window:
+```text
+http://127.0.0.1:8000
+```
+
+Interactive API documentation:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+---
+
+## 8. Start Frontend
+
+Open a second terminal:
 
 ```bash
 cd frontend
+
 npm install
+
 npm run dev
 ```
+
+Open the Vite development URL shown in your terminal.
+
+---
+
+# ⚙️ Configuration
+
+Create a `.env` file:
+
+```env
+HOST=127.0.0.1
+PORT=8000
+
+WEIGHT_SEMANTIC=0.55
 WEIGHT_KEYWORD=0.20
 WEIGHT_METADATA=0.15
 WEIGHT_DECISION=0.10
 
-# Host and Port
-HOST=127.0.0.1
-PORT=8000
-
-# Optional LLM Configuration (If omitted, system uses local LangGraph fallback)
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
 ```
 
----
-
-## 🧪 Benchmark Results
-
-| Method | Overall Accuracy (Recall@1) | Zero-Overlap Accuracy | Recall@3 | MRR |
-| :--- | :---: | :---: | :---: | :---: |
-| **Keyword-Only (BM25)** | 15.0% | 0.0% | 15.0% | 0.163 |
-| **Vector-Only (Dense ChromaDB)** | 82.5% | 75.0% | 90.0% | 0.862 |
-| **Full LangGraph Hybrid Pipeline** | **100.0%** | **100.0%** | **100.0%** | **1.000** |
+The system can operate using the local fallback workflow when an OpenAI API key is not configured.
 
 ---
 
-## 💡 Embeddings Are Not Magic — Limitations & Failure Modes
+# 🔬 Why Hybrid Retrieval?
 
-1. **Short Ambiguous Messages**: Single-word messages ("done", "ok", "haan") rely heavily on conversation thread context.
-2. **Multiple Conversations on Same Topic**: If the group chat discusses two separate trips (e.g. Manali in Jan and Goa in March), date filters or speaker filters are essential to prevent ambiguity.
-3. **Multilingual Code-Switching Limits**: Base English embedding models can misinterpret deep local slang; using `BAAI/bge-m3` or `multilingual-e5` improves non-English nuances.
+No single retrieval method is perfect.
+
+### BM25
+
+Excellent for:
+
+* Exact names
+* Keywords
+* URLs
+* Specific terms
+* Rare tokens
+
+But weak when the query uses different wording.
+
+### Dense Retrieval
+
+Excellent for:
+
+* Meaning
+* Paraphrases
+* Natural-language questions
+* Zero-word-overlap retrieval
+
+But can sometimes retrieve semantically similar yet incorrect conversations.
+
+### Metadata Filtering
+
+Useful for:
+
+* People
+* Dates
+* Threads
+* Conversation boundaries
+
+### Decision-Aware Ranking
+
+Useful when the user is looking for:
+
+* Final decisions
+* Confirmations
+* Bookings
+* Agreements
+* Settled plans
+
+### Hybrid Search
+
+Combining all of these produces a more robust retrieval system.
 
 ---
 
-## 📄 License
+# 🧠 Embeddings Are Not Magic
 
-MIT License. Built for hackathon demonstration.
+Semantic retrieval still has limitations.
+
+## 1. Short Ambiguous Messages
+
+Messages such as:
+
+```text
+"done"
+"ok"
+"haan"
+"fixed"
+```
+
+contain very little semantic information.
+
+The surrounding conversation becomes essential.
+
+---
+
+## 2. Multiple Similar Conversations
+
+A group may discuss:
+
+```text
+Manali → January
+
+Goa → March
+```
+
+A query such as:
+
+> “When did we finalize the trip?”
+
+may require date, speaker, or conversation context to determine which trip is intended.
+
+---
+
+## 3. Multilingual Nuances
+
+The current embedding model is optimized primarily for general semantic retrieval.
+
+For deeper multilingual or Indian-language understanding, models such as:
+
+```text
+BAAI/bge-m3
+multilingual-e5
+```
+
+may provide better results depending on the dataset.
+
+---
+
+# 🐛 Debug & Developer Mode
+
+The application includes a developer debugging panel exposing the retrieval pipeline.
+
+It can visualize:
+
+```text
+Query Interpretation
+        ↓
+Intent
+        ↓
+Entities
+        ↓
+Semantic Candidates
+        ↓
+BM25 Candidates
+        ↓
+Metadata Filtering
+        ↓
+Merged Candidates
+        ↓
+Reranking
+        ↓
+Final Score
+```
+
+This makes it easier to understand **why a particular message was ranked #1**.
+
+---
+
+# 📁 Project Structure
+
+```text
+semantic-chat-search/
+│
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── api/
+│   │   ├── models/
+│   │   ├── services/
+│   │   └── pipeline/
+│   │
+│   └── requirements.txt
+│
+├── frontend/
+│   ├── src/
+│   ├── components/
+│   ├── pages/
+│   └── package.json
+│
+├── scripts/
+│   ├── generate_dataset.py
+│   ├── build_index.py
+│   └── evaluate.py
+│
+├── tests/
+│
+├── data/
+│
+├── evaluation_queries.json
+│
+├── .env.example
+│
+└── README.md
+```
+
+---
+
+# 🏆 Hackathon Value Proposition
+
+### Traditional Search
+
+> **“Find messages containing these words.”**
+
+### Semantic Group Chat Search
+
+> **“Find the conversation where this idea, decision, or event was discussed.”**
+
+The system transforms group-chat search from:
+
+```text
+Keyword Matching
+```
+
+into:
+
+```text
+Intent
+   +
+Semantic Meaning
+   +
+Metadata
+   +
+Conversation Context
+   +
+Decision Awareness
+```
+
+---
+
+# 🎬 Example Demo
+
+### User
+
+> **“When did we decide to go to Manali?”**
+
+### Search Engine
+
+```text
+Intent:
+Decision Retrieval
+
+Entities:
+Manali
+
+Time:
+Not specified
+
+Semantic Search:
+✓ Candidate found
+
+BM25:
+✓ Supporting candidates found
+
+Decision Signal:
+✓ "final"
+✓ "confirm"
+✓ "book"
+
+Final Match:
+⭐ Manali final hai bhai, February mein chalte hain.
+```
+
+The UI then displays the surrounding conversation so the user can see **how the decision was made**, not just one isolated message.
+
+---
+
+# 🔮 Future Improvements
+
+Potential next steps include:
+
+* 🔤 Better multilingual embeddings
+* 🧵 Conversation/thread detection
+* 🧠 Cross-encoder reranking
+* 🗣️ Voice-query support
+* 📱 WhatsApp/Telegram export ingestion
+* 🔐 Local/private inference
+* 📚 Larger real-world datasets
+* 🤖 Conversational follow-up queries
+* 🧩 Multi-hop retrieval
+* 📌 Automatic decision extraction
+* 🕸️ Conversation knowledge graphs
+
+---
+
+# 📜 License
+
+MIT License.
+
+Built for hackathon demonstration and experimentation.
+
+---
+
+# ⭐ Built With
+
+**FastAPI · LangGraph · LlamaIndex · ChromaDB · BM25 · Sentence Transformers · React 19 · Vite · Tailwind CSS**
+
+> **Search the meaning. Find the moment. Recover the decision.** 🔍
